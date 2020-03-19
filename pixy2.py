@@ -1,10 +1,7 @@
-import di_i2c
-import logging
+from pyb import I2C
 import struct
 
 from collections import namedtuple
-
-logger = logging.getLogger(__name__)
 
 # for more on the serial interface (SPI, uart, I2C) check this link
 # https://docs.pixycam.com/wiki/doku.php?id=wiki:v2:porting_guide#general-format
@@ -66,8 +63,35 @@ RGBPixel = namedtuple('RGBPixel', 'r g b')
 
 class Pixy2I2C():
 
-    def __init__(self, address, bus="RPI_1"):
-        self.i2c_bus = di_i2c.DI_I2C(bus, address, big_endian=False)
+    def __init__(self, address = 0x54, bus=1):
+        self.i2c_bus = I2C(bus, I2C.MASTER)
+        self.address = address
+        if not self.i2c_bus.is_ready(address):
+            print("No device at this address on this bus")
+
+
+    def transfer(self, out, length):
+        bytesToSend = bytes(out)
+        self.i2c_bus.send(bytesToSend, self.address)
+        dataToRead = bytearray(length)
+        self.i2c_bus.recv(dataToRead, self.address)
+        return dataToRead
+
+
+    def read_list(self, reg, len):
+        """Read a list of bytes from a register
+        Keyword arguments:
+        reg -- Register to read from or None
+        len -- Number of bytes to read
+        Returns a list of the bytes read"""
+
+        # write the register to read from?
+        if reg != None:
+            outArr = [reg]
+        else:
+            outArr = []
+        return self.transfer(outArr, len)
+
 
     def get_version(self):
         """
@@ -79,8 +103,8 @@ class Pixy2I2C():
             # 2 sync bytes, type packet, length payload
             174, 193, 14, 0
         ]
-        logger.debug('get version from pixy2')
-        inp = self.i2c_bus.transfer(out, 13)
+        print('get version from pixy2')
+        inp = self.transfer(out, 13)
         hw = unpack_bytes(inp[6:8], big_endian=False)
         major = inp[8]
         minor = inp[9]
@@ -99,8 +123,8 @@ class Pixy2I2C():
             # 2 sync bytes, type packet, length payload, unused type
             174, 193, 12, 1, 0
         ]
-        logger.debug('get resolution from pixy2')
-        inp = self.i2c_bus.transfer(out, 10)
+        print('get resolution from pixy2')
+        inp = self.transfer(out, 10)
 
         checksum = struct.unpack('<H', bytes(inp[4:6]))[0]
         if checksum == sum(inp[6:10]):
@@ -120,8 +144,8 @@ class Pixy2I2C():
             # 2 sync bytes, type packet, length payload, brightness
             174, 193, 16, 1, brightness
         ]
-        logger.debug('set pixy2 camera brightness to ' + str(brightness))
-        self.i2c_bus.transfer(out, 10)
+        print('set pixy2 camera brightness to ' + str(brightness))
+        self.transfer(out, 10)
 
     def set_servos(self, s0, s1):
         """
@@ -137,8 +161,8 @@ class Pixy2I2C():
         ]
         # add s0 servo pan and s1 servo tilt
         out += list(struct.pack('<HH', s0, s1))
-        logger.debug('set pixy2 s0={} and s1={} servo pan/tilt'.format(s0, s1))
-        self.i2c_bus.transfer(out, 10)
+        print('set pixy2 s0={} and s1={} servo pan/tilt'.format(s0, s1))
+        self.transfer(out, 10)
 
     def set_led(self, red, green, blue):
         """
@@ -152,8 +176,8 @@ class Pixy2I2C():
         out = [
             174, 193, 20, 3, red, green, blue
         ]
-        logger.debug('set pixy2 LED to RGB=({}, {}, {})'.format(red, green, blue))
-        self.i2c_bus.transfer(out, 10)
+        print('set pixy2 LED to RGB=({}, {}, {})'.format(red, green, blue))
+        self.transfer(out, 10)
 
     def set_lamp(self, on):
         """
@@ -168,8 +192,8 @@ class Pixy2I2C():
             174, 193, 22, 2, 1 if on == 1 else 0, 0
         ]
         on_str = 'on' if on == 1 else 'off'
-        logger.debug('set pixy2 lamp ' + on_str)
-        self.i2c_bus.transfer(out, 10)
+        print('set pixy2 lamp ' + on_str)
+        self.transfer(out, 10)
 
     def get_fps(self):
         """
@@ -181,8 +205,8 @@ class Pixy2I2C():
             # 2 sync bytes, type packet, length payload
             174, 193, 24, 0
         ]
-        logger.debug('get fps from pixy2')
-        inp = self.i2c_bus.transfer(out, 10)
+        print('get fps from pixy2')
+        inp = self.transfer(out, 10)
         fps = struct.unpack('<I', bytes(inp[6:10]))[0]
 
         return fps
@@ -206,14 +230,14 @@ class Pixy2I2C():
             # sigmap, max blocks to return
             174, 193, 32, 2, sigmap, maxblocks
         ]
-        logger.debug('detect pixy2 blocks')
-        inp = self.i2c_bus.transfer(out, 4)
+        #print('detect pixy2 blocks')
+        inp = self.transfer(out, 4)
         type_packet = inp[2]
         
         # got a response blocks response
         if type_packet == 33:
             payload_length = inp[3]
-            inp = self.i2c_bus.read_list(reg=None, len=payload_length + 2)
+            inp = self.read_list(reg=None, len=payload_length + 2)
 
             checksum = struct.unpack('<H', bytes(inp[0:2]))[0]
             inp = inp[2:]
@@ -228,14 +252,14 @@ class Pixy2I2C():
                 for i in range(no_blocks):
                     data = struct.unpack('<5HhBB', bytes(inp[i*block_length:(i+1)*block_length]))
                     blocks.append(data)
-                logger.debug('pixy2 detected {} blocks'.format(no_blocks))
+                #print('pixy2 detected {} blocks'.format(no_blocks))
 
                 return blocks
             else:
-                logger.debug('checksum doesn\'t match for the detected blocks')
+                #print('checksum doesn\'t match for the detected blocks')
                 return None
         else:
-            logger.debug('pixy2 is busy or got into an error while reading blocks')
+            #print('pixy2 is busy or got into an error while reading blocks')
             return None
 
 
@@ -255,7 +279,7 @@ class Pixy2I2C():
         # if the checksum doesn't match
         inp = inp[2:]
         if check_sum != sum(inp):
-            logger.debug('checksum doesn\'t match for the main features')
+            print('checksum doesn\'t match for the main features')
             return None
 
         # parse the read data
@@ -286,7 +310,7 @@ class Pixy2I2C():
                 out['intersections'] = []
                 for i in range(size):
                     data = fdata[i * INTERSECTION_SIZE: (i + 1) * INTERSECTION_SIZE]
-                    intersect = Intersection(*data[:4], [])
+                    intersect = Intersection(data[:4], [])
                     data = data[4:]
                     for line in range(intersect.size):
                         intersect_line = IntersectionLine(
@@ -330,10 +354,10 @@ class Pixy2I2C():
         out = [
             174, 193, 48, 2, features, 7
         ]
-        logger.debug('detect main features on the pixy2')
+        print('detect main features on the pixy2')
 
         # make a request to get the main features
-        inp = self.i2c_bus.transfer(out, 4)
+        inp = self.transfer(out, 4)
         mtype = inp[2]
         payload_length = inp[3]
 
@@ -344,13 +368,13 @@ class Pixy2I2C():
                 # get the features
                 response = self.__get_main_features(payload_length)
                 if response is None:
-                    logger.debug('error/no features detected on the pixy2')
+                    print('error/no features detected on the pixy2')
                 else:
-                    logger.debug('detected main features on the pixy2')
+                    print('detected main features on the pixy2')
                 return response
             # or if there isn't then return none
             else:
-                logger.debug('no features detected on the pixy2')
+                print('no features detected on the pixy2')
                 return None
         # otherwise just return none
         else:
@@ -366,8 +390,8 @@ class Pixy2I2C():
             # 2 sync bytes, type packet, length payload, mode
             174, 193, 54, 1, mode
         ]
-        logger.debug('set pixy2 mode to 0x{:02X}'.format(mode))
-        self.i2c_bus.transfer(out, 10)
+        print('set pixy2 mode to 0x{:02X}'.format(mode))
+        self.transfer(out, 10)
 
     def set_next_turn(self, angle):
         """
@@ -382,8 +406,8 @@ class Pixy2I2C():
             174, 193, 58, 2
         ] + list(_angle)
 
-        logger.debug('set pixy2 next turn angle to {}'.format(angle))
-        self.i2c_bus.transfer(out, 10)
+        print('set pixy2 next turn angle to {}'.format(angle))
+        self.transfer(out, 10)
 
     def set_default_turn(self, angle):
         """
@@ -398,8 +422,8 @@ class Pixy2I2C():
             174, 193, 60, 2
         ] + list(_angle)
 
-        logger.debug('set pixy2 default turn angle to {}'.format(angle))
-        self.i2c_bus.transfer(out, 10)
+        print('set pixy2 default turn angle to {}'.format(angle))
+        self.transfer(out, 10)
 
     def set_vector(self, index):
         """
@@ -413,8 +437,8 @@ class Pixy2I2C():
             174, 193, 56, 1, index
         ]
 
-        logger.debug('set vector index to track to {} on pixy2'.format(index))
-        self.i2c_bus.transfer(out, 10)
+        print('set vector index to track to {} on pixy2'.format(index))
+        self.transfer(out, 10)
 
     def reverse_vector(self):
         """
@@ -426,8 +450,8 @@ class Pixy2I2C():
             # 2 sync bytes, type packet, length payload
             174, 193, 62, 0
         ]
-        logger.debug('get reverse vectors instead on pixy2')
-        self.i2c_bus.transfer(out, 10)
+        print('get reverse vectors instead on pixy2')
+        self.transfer(out, 10)
 
     def get_rgb(self, x, y, saturate):
         """
@@ -445,8 +469,8 @@ class Pixy2I2C():
             174, 193, 112, 5
         ] + list(_x) + list(_y) + [saturate]
 
-        logger.debug('read pixel from x={},y={} on pixy2'.format(x, y))
-        inp = self.i2c_bus.transfer(out, 9)
+        print('read pixel from x={},y={} on pixy2'.format(x, y))
+        inp = self.transfer(out, 9)
 
         # do checksum and return the pixel
         checksum = struct.unpack('<H', bytes(inp[4:6]))[0]
